@@ -164,17 +164,6 @@ Not sandboxed. Every permission is optional and the app degrades gracefully when
 
 ---
 
-## Resume Bullet Points
-
-> **Nimbus — macOS Dynamic Island Clone** *(Swift, SwiftUI, AppKit)*
-> - Built a zero-dependency floating HUD that morphs between 5 window geometries using `NSPanel` + `NSAnimationContext` with cubic Bézier easing, drawing real-time Spotify/Apple Music data via 1Hz AppleScript subprocess polling
-> - Architected a three-layer corner-radius compositing system (`NSVisualEffectView.layer` → `NSHostingView.layer` → SwiftUI `.clipShape`) to achieve pixel-perfect frosted-glass rounded corners on a borderless window panel
-> - Eliminated polling-driven window thrash by frame-diffing the computed `NSRect` before invoking any animation — keeping the UI at 0 unnecessary redraws despite 1Hz background data ticks
-> - Implemented live system telemetry from raw kernel APIs — CPU via `host_processor_info`, RAM via `host_statistics64`, network throughput by diffing `getifaddrs` byte counters, and battery via IOKit — plus `osascript`-driven system brightness/volume control
-> - Integrated real weather (`CoreLocation` + key-less Open-Meteo, with IP-geolocation fallback) and calendar (`EventKit`) data with graceful permission-denied states, persisted preferences via `UserDefaults`, and `SMAppService` launch-at-login
-
----
-
 ## Roadmap
 
 - [x] **Live weather** via Open-Meteo free API (no key required)
@@ -197,7 +186,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-Built with ❤️ by [Akshay Joshi](https://github.com/rohanrjoshii)
+Built with ❤️ by [Rohan Joshi](https://github.com/rohanrjoshii)
 
 *Inspired by Apple's Dynamic Island and the Canopy macOS app*
 
