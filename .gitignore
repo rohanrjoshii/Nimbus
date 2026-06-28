@@ -1,0 +1,54 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Swift build artifacts
+.build/
+*.o
+*.d
+DerivedData/
+build/
+
+# Compiled binaries (root-anchored so they don't shadow the Sources/ tree)
+/Nimbus
+/Nimbus_Release
+/MacDI
+/MacDITest
+/MacDI_Release
+
+# Built app bundle (produced by bundle.sh — not committed)
+*.app/
+
+# Optional user-supplied lock/unlock sounds (keep the README, ignore audio)
+Sounds/*.aiff
+Sounds/*.wav
+Sounds/*.m4a
+Sounds/*.mp3
+Sounds/*.caf
+
+# Logs / scratch
+*.log
+/log_media
+log_media.swift
+
+# Claude Code (local tooling config — not part of the project)
+.claude/
+
+# Swift Package Manager
+.swiftpm/
+Package.resolved
+
+# Xcode project (if added later)
+*.xcodeproj/
+*.xcworkspace/
+
+# Environment / secrets
+.env
+*.pem
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
