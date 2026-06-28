@@ -9,7 +9,6 @@ struct DynamicIslandView: View {
     @ObservedObject private var lyrics = LyricsManager.shared
     @ObservedObject private var calendar = CalendarManager.shared
 
-    @State private var viewDragOffset: CGSize = .zero
     @State private var pulsePhase: Double = 0.0
 
     // Lock / unlock flash animation
@@ -103,20 +102,6 @@ struct DynamicIslandView: View {
         }
         // ── Critical: clip ALL layers including content to the pill shape ──
         .clipShape(pillShape)
-        // Drag to reposition
-        .offset(viewDragOffset)
-        .gesture(
-            DragGesture()
-                .onChanged { v in
-                    viewDragOffset = v.translation
-                    if Int(v.translation.height) % 18 == 0 { HapticManager.shared.triggerTick() }
-                }
-                .onEnded { _ in
-                    withAnimation(.spring(response: 0.42, dampingFraction: 0.70)) {
-                        viewDragOffset = .zero
-                    }
-                }
-        )
         // Hover is handled at the AppKit level (IslandHostingView) for reliability.
         .contextMenu {
             Button {

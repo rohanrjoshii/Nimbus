@@ -26,6 +26,11 @@ class MusicManager: ObservableObject {
     private var mainTimer: Timer?
     private var simulationTimer: Timer?
 
+    // Serial poll queue + re-entrancy guard: never let a slow osascript poll
+    // pile up across 1s ticks (that pile-up was the cause of the hang/lag).
+    private let pollQueue = DispatchQueue(label: "com.akshayjoshi.nimbus.poll", qos: .userInitiated)
+    private var pollPending = false
+
     // Dynamic MediaRemote function pointers — system-wide now-playing + transport control.
     private typealias MRMediaRemoteGetNowPlayingInfoFunction = @convention(c) (DispatchQueue, @escaping (CFDictionary) -> Void) -> Void
     private typealias MRMediaRemoteSendCommandFunction = @convention(c) (Int, CFDictionary?) -> Bool
@@ -90,59 +95,55 @@ class MusicManager: ObservableObject {
 
     func updateTrackInfo() {
         guard !isSimulated else { return }
+        guard !pollPending else { return }   // a poll is still running — skip, never pile up
+        pollPending = true
 
         let source = AppState.shared.audioSource
-
-        switch source {
-        case 1:
-            // Forced Spotify
-            pollSpotify()
-        case 2:
-            // Forced Apple Music
-            pollAppleMusic()
-        default:
-            // Auto: check which app is running and playing
-            pollAuto()
+        pollQueue.async { [weak self] in
+            guard let self = self else { return }
+            defer { DispatchQueue.main.async { self.pollPending = false } }
+            self.performPoll(source: source)
         }
     }
 
-    private func pollAuto() {
-        // Run on a background thread to avoid blocking the UI
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+    /// Runs synchronously on the serial pollQueue (one poll at a time).
+    private func performPoll(source: Int) {
+        switch source {
+        case 1: // forced Spotify
+            if let info = querySpotify() { DispatchQueue.main.async { self.applyTrackInfo(info, player: .spotify) } }
+            else { DispatchQueue.main.async { self.setNotPlaying() } }
+        case 2: // forced Apple Music
+            if let info = queryAppleMusic() { DispatchQueue.main.async { self.applyTrackInfo(info, player: .appleMusic) } }
+            else { DispatchQueue.main.async { self.setNotPlaying() } }
+        default:
+            performAutoPoll()
+        }
+    }
 
-            let spotifyRunning = self.isAppRunning("Spotify")
-            let musicRunning = self.isAppRunning("Music")
-
-            // Try Spotify first if running
-            if spotifyRunning, let info = self.querySpotify() {
-                let parts = info.components(separatedBy: "|")
-                if parts.count >= 2 && parts[0] != "stopped" {
-                    DispatchQueue.main.async { self.applyTrackInfo(info, player: .spotify) }
-                    return
-                }
-            }
-
-            // Try Apple Music if running
-            if musicRunning, let info = self.queryAppleMusic() {
-                let parts = info.components(separatedBy: "|")
-                if parts.count >= 2 && parts[0] != "stopped" {
-                    DispatchQueue.main.async { self.applyTrackInfo(info, player: .appleMusic) }
-                    return
-                }
-            }
-
-            // Spotify/Music empty → try a browser tab (YouTube/web players), then
-            // the system Now Playing (other native apps via MediaRemote).
-            if let b = self.queryBrowser() {
-                DispatchQueue.main.async {
-                    self.applyNowPlaying(title: b.title, artist: b.artist, pos: 0, dur: 0, playing: true, artwork: nil)
-                }
-                if let art = b.artworkURL { self.fetchRemoteArtwork(art, title: b.title, artist: b.artist) }
+    private func performAutoPoll() {
+        if isAppRunning("Spotify"), let info = querySpotify() {
+            let parts = info.components(separatedBy: "|")
+            if parts.count >= 2 && parts[0] != "stopped" {
+                DispatchQueue.main.async { self.applyTrackInfo(info, player: .spotify) }
                 return
             }
-            self.fetchNowPlayingViaMediaRemote()
         }
+        if isAppRunning("Music"), let info = queryAppleMusic() {
+            let parts = info.components(separatedBy: "|")
+            if parts.count >= 2 && parts[0] != "stopped" {
+                DispatchQueue.main.async { self.applyTrackInfo(info, player: .appleMusic) }
+                return
+            }
+        }
+        // Browser fallback — only when a browser is frontmost (a single cheap osascript).
+        if let b = queryBrowser() {
+            DispatchQueue.main.async {
+                self.applyNowPlaying(title: b.title, artist: b.artist, pos: 0, dur: 0, playing: true, artwork: nil)
+            }
+            if let art = b.artworkURL { fetchRemoteArtwork(art, title: b.title, artist: b.artist) }
+            return
+        }
+        fetchNowPlayingViaMediaRemote()
     }
 
     // MARK: - Browser tab fallback (YouTube etc.)
@@ -151,30 +152,29 @@ class MusicManager: ObservableObject {
     /// media tab's title/thumbnail (can't read true play/pause without MediaRemote).
     /// Requires Automation permission for the browser.
     private func queryBrowser() -> (title: String, artist: String, artworkURL: String?)? {
-        let chromium = ["Google Chrome", "Brave Browser", "Microsoft Edge", "Arc", "Chromium"]
-        for app in chromium where isAppRunning(app) {
-            let script = """
-            tell application "\(app)"
-                if (count of windows) is 0 then return ""
-                set t to title of active tab of front window
-                set u to URL of active tab of front window
-                return u & "|||" & t
-            end tell
-            """
-            if let r = parseBrowserResult(runAppleScript(script)) { return r }
-        }
-        if isAppRunning("Safari") {
-            let script = """
-            tell application "Safari"
-                if (count of windows) is 0 then return ""
-                set t to name of current tab of front window
-                set u to URL of current tab of front window
-                return u & "|||" & t
-            end tell
-            """
-            if let r = parseBrowserResult(runAppleScript(script)) { return r }
-        }
-        return nil
+        // Only query the FRONTMOST browser — one osascript, and only while the
+        // user is actually in the browser. Avoids polling 6 browsers every tick.
+        guard let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier?.lowercased() else { return nil }
+        let appName: String
+        let isSafari: Bool
+        if front.contains("google.chrome")      { appName = "Google Chrome";  isSafari = false }
+        else if front.contains("brave")          { appName = "Brave Browser";  isSafari = false }
+        else if front.contains("edgemac")        { appName = "Microsoft Edge"; isSafari = false }
+        else if front.contains("thebrowser") || front.hasSuffix(".arc") { appName = "Arc"; isSafari = false }
+        else if front.contains("apple.safari")   { appName = "Safari";         isSafari = true }
+        else { return nil }
+
+        let tab = isSafari ? "current tab of front window" : "active tab of front window"
+        let titleProp = isSafari ? "name" : "title"
+        let script = """
+        tell application "\(appName)"
+            if (count of windows) is 0 then return ""
+            set t to \(titleProp) of \(tab)
+            set u to URL of \(tab)
+            return u & "|||" & t
+        end tell
+        """
+        return parseBrowserResult(runAppleScript(script))
     }
 
     private func parseBrowserResult(_ out: String?) -> (title: String, artist: String, artworkURL: String?)? {
@@ -211,28 +211,6 @@ class MusicManager: ObservableObject {
             guard let data = data, let img = NSImage(data: data) else { return }
             DispatchQueue.main.async { ArtworkCache.shared.cachedImages["\(title)-\(artist)"] = img }
         }.resume()
-    }
-
-    private func pollSpotify() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            if let info = self.querySpotify() {
-                DispatchQueue.main.async { self.applyTrackInfo(info, player: .spotify) }
-            } else {
-                DispatchQueue.main.async { self.setNotPlaying() }
-            }
-        }
-    }
-
-    private func pollAppleMusic() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            if let info = self.queryAppleMusic() {
-                DispatchQueue.main.async { self.applyTrackInfo(info, player: .appleMusic) }
-            } else {
-                DispatchQueue.main.async { self.setNotPlaying() }
-            }
-        }
     }
 
     // MARK: - Apply Track State
@@ -407,55 +385,71 @@ class MusicManager: ObservableObject {
 
     func togglePlayPause() {
         if isSimulated { isPlaying.toggle(); return }
-
-        switch activePlayer {
-        case .spotify:
-            if isAppRunning("Spotify") { _ = runAppleScript("tell application \"Spotify\" to playpause") }
-        case .appleMusic:
-            if isAppRunning("Music") { _ = runAppleScript("tell application \"Music\" to playpause") }
-        case .system:
-            _ = mrSendCommand?(kMRTogglePlayPause, nil)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.updateTrackInfo() }
-        case .simulated:
-            isPlaying.toggle()
-        case .none:
-            if isAppRunning("Spotify") {
-                _ = runAppleScript("tell application \"Spotify\" to play")
-            } else if isAppRunning("Music") {
-                _ = runAppleScript("tell application \"Music\" to play")
+        isPlaying.toggle()   // optimistic — instant UI feedback
+        let player = activePlayer
+        runTransport {
+            switch player {
+            case .spotify where self.isAppRunning("Spotify"):
+                _ = self.runAppleScript("tell application \"Spotify\" to playpause")
+            case .appleMusic where self.isAppRunning("Music"):
+                _ = self.runAppleScript("tell application \"Music\" to playpause")
+            case .system:
+                _ = self.mrSendCommand?(self.kMRTogglePlayPause, nil)
+            case .none:
+                if self.isAppRunning("Spotify") { _ = self.runAppleScript("tell application \"Spotify\" to play") }
+                else if self.isAppRunning("Music") { _ = self.runAppleScript("tell application \"Music\" to play") }
+            default: break
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.updateTrackInfo() }
         }
     }
 
     func nextTrack() {
         if isSimulated { trackTitle = "Die For You"; trackArtist = "Joji"; trackDuration = 211; playerPosition = 0; return }
-        switch activePlayer {
-        case .spotify: if isAppRunning("Spotify") { _ = runAppleScript("tell application \"Spotify\" to next track") }
-        case .appleMusic: if isAppRunning("Music") { _ = runAppleScript("tell application \"Music\" to next track") }
-        case .system: _ = mrSendCommand?(kMRNextTrack, nil)
-        default: break
+        let player = activePlayer
+        runTransport {
+            switch player {
+            case .spotify where self.isAppRunning("Spotify"): _ = self.runAppleScript("tell application \"Spotify\" to next track")
+            case .appleMusic where self.isAppRunning("Music"): _ = self.runAppleScript("tell application \"Music\" to next track")
+            case .system: _ = self.mrSendCommand?(self.kMRNextTrack, nil)
+            default: break
+            }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.updateTrackInfo() }
     }
 
     func prevTrack() {
         if isSimulated { trackTitle = "Sanctuary"; trackArtist = "Joji"; trackDuration = 180; playerPosition = 0; return }
-        switch activePlayer {
-        case .spotify: if isAppRunning("Spotify") { _ = runAppleScript("tell application \"Spotify\" to previous track") }
-        case .appleMusic: if isAppRunning("Music") { _ = runAppleScript("tell application \"Music\" to previous track") }
-        case .system: _ = mrSendCommand?(kMRPreviousTrack, nil)
-        default: break
+        let player = activePlayer
+        runTransport {
+            switch player {
+            case .spotify where self.isAppRunning("Spotify"): _ = self.runAppleScript("tell application \"Spotify\" to previous track")
+            case .appleMusic where self.isAppRunning("Music"): _ = self.runAppleScript("tell application \"Music\" to previous track")
+            case .system: _ = self.mrSendCommand?(self.kMRPreviousTrack, nil)
+            default: break
+            }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.updateTrackInfo() }
     }
 
     func seek(to seconds: Double) {
         if isSimulated { playerPosition = seconds; return }
-        switch activePlayer {
-        case .spotify: if isAppRunning("Spotify") { _ = runAppleScript("tell application \"Spotify\" to set player position to \(seconds)") }
-        case .appleMusic: if isAppRunning("Music") { _ = runAppleScript("tell application \"Music\" to set player position to \(seconds)") }
-        default: break
+        playerPosition = seconds   // optimistic scrubber position
+        let player = activePlayer
+        pollQueue.async { [weak self] in
+            guard let self = self else { return }
+            switch player {
+            case .spotify where self.isAppRunning("Spotify"): _ = self.runAppleScript("tell application \"Spotify\" to set player position to \(seconds)")
+            case .appleMusic where self.isAppRunning("Music"): _ = self.runAppleScript("tell application \"Music\" to set player position to \(seconds)")
+            default: break
+            }
+        }
+    }
+
+    /// Runs a transport command off the main thread (serialized with polling),
+    /// then refreshes track state. Keeps the UI responsive on every button press.
+    private func runTransport(_ work: @escaping () -> Void) {
+        pollQueue.async { [weak self] in
+            guard let self = self else { return }
+            work()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.updateTrackInfo() }
         }
     }
 
