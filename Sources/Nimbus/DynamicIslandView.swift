@@ -32,6 +32,12 @@ struct DynamicIslandView: View {
         return (appState.isExpanded || appState.isScreenLocked) ? base : min(1.0, base + 0.06)
     }
 
+    private var chargeLabel: String {
+        if !power.plugged { return "On Battery" }
+        if power.isCharging { return "Charging" }
+        return power.level >= 100 ? "Charged" : "Plugged In"
+    }
+
     var body: some View {
         ZStack {
             // ── 1. Frosted glass base (real macOS blur) ─────────────────────
@@ -184,17 +190,17 @@ struct DynamicIslandView: View {
 
             case .charging:
                 HStack(spacing: 10) {
-                    Image(systemName: power.isCharging ? "bolt.fill" : "battery.50")
+                    Image(systemName: power.plugged ? "bolt.fill" : "battery.50")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(power.isCharging ? .green : .white.opacity(0.85))
+                        .foregroundColor(power.plugged ? .green : .white.opacity(0.85))
                         .frame(width: 20)
-                    Text(power.isCharging ? "Charging" : "On Battery")
+                    Text(chargeLabel)
                         .font(.system(size: 12.5, weight: .semibold, design: .rounded))
                         .foregroundColor(.white)
                     Spacer(minLength: 6)
                     Text("\(power.level)%")
                         .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundColor(power.isCharging ? .green : .white.opacity(0.8))
+                        .foregroundColor(power.plugged ? .green : .white.opacity(0.8))
                 }
                 .padding(.horizontal, 15)
 

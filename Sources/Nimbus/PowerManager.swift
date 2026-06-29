@@ -7,21 +7,23 @@ import Combine
 final class PowerManager: ObservableObject {
     static let shared = PowerManager()
 
-    @Published var isCharging: Bool = false
+    @Published var plugged: Bool = false      // power adapter connected (instant signal)
+    @Published var isCharging: Bool = false    // battery actively charging
     @Published var level: Int = 100
-    @Published var showEvent: Bool = false   // transient
+    @Published var showEvent: Bool = false     // transient
 
-    private var lastCharging: Bool?
+    private var lastPlugged: Bool?
     private var runLoopSource: CFRunLoopSource?
     private var dismissWork: DispatchWorkItem?
 
     private init() {}
 
     func start() {
-        let (charging, lvl) = read()
-        lastCharging = charging
-        isCharging = charging
-        level = lvl
+        let s = read()
+        lastPlugged = s.plugged
+        plugged = s.plugged
+        isCharging = s.charging
+        level = s.level
 
         let ctx = Unmanaged.passUnretained(self).toOpaque()
         if let src = IOPSNotificationCreateRunLoopSource({ ctx in
@@ -29,19 +31,22 @@ final class PowerManager: ObservableObject {
             Unmanaged<PowerManager>.fromOpaque(ctx).takeUnretainedValue().powerChanged()
         }, ctx)?.takeRetainedValue() {
             runLoopSource = src
-            CFRunLoopAddSource(CFRunLoopGetMain(), src, .defaultMode)
+            // commonModes so it still fires during menu tracking / live resize.
+            CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes)
         }
     }
 
     private func powerChanged() {
-        let (charging, lvl) = read()
-        level = lvl
-        if let last = lastCharging, last != charging {
-            isCharging = charging
+        let s = read()
+        level = s.level
+        isCharging = s.charging
+        // Pop on plug/unplug — the AC-state change is instant (unlike isCharging).
+        if let last = lastPlugged, last != s.plugged {
+            plugged = s.plugged
             flash()
         }
-        lastCharging = charging
-        isCharging = charging
+        lastPlugged = s.plugged
+        plugged = s.plugged
     }
 
     private func flash() {
@@ -52,19 +57,20 @@ final class PowerManager: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
     }
 
-    private func read() -> (charging: Bool, level: Int) {
+    private func read() -> (plugged: Bool, charging: Bool, level: Int) {
         guard let snap = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(snap)?.takeRetainedValue() as? [CFTypeRef] else {
-            return (false, 100)
+            return (false, false, 100)
         }
         for ps in list {
             guard let desc = IOPSGetPowerSourceDescription(snap, ps)?.takeUnretainedValue() as? [String: Any] else { continue }
             if (desc[kIOPSTypeKey] as? String) == kIOPSInternalBatteryType {
+                let plugged = (desc[kIOPSPowerSourceStateKey] as? String) == kIOPSACPowerValue
                 let charging = (desc[kIOPSIsChargingKey] as? Bool) ?? false
                 let level = (desc[kIOPSCurrentCapacityKey] as? Int) ?? 100
-                return (charging, level)
+                return (plugged, charging, level)
             }
         }
-        return (false, 100)
+        return (false, false, 100)
     }
 }
