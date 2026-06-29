@@ -20,6 +20,10 @@ struct ControlCenterView: View {
         .padding(16)
         .frame(width: 286, height: 474, alignment: .top)
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+        )
         .preferredColorScheme(.dark)
     }
 
@@ -63,10 +67,10 @@ struct ControlCenterView: View {
             }
             Spacer()
 
-            HStack(spacing: 14) {
-                ctlIcon("backward.fill", 13) { music.prevTrack() }
-                ctlIcon(music.isPlaying ? "pause.fill" : "play.fill", 16) { music.togglePlayPause() }
-                ctlIcon("forward.fill", 13) { music.nextTrack() }
+            HStack(spacing: 6) {
+                TransportButton(icon: "backward.fill", size: 12) { music.prevTrack() }
+                TransportButton(icon: music.isPlaying ? "pause.fill" : "play.fill", size: 13, primary: true) { music.togglePlayPause() }
+                TransportButton(icon: "forward.fill", size: 12) { music.nextTrack() }
             }
         }
         .padding(12)
@@ -160,7 +164,7 @@ struct ControlCenterView: View {
                         .stroke(Color.white.opacity(0.1), lineWidth: 0.5))
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressScaleButtonStyle())
     }
 
     private var secondaryToggles: some View {
@@ -188,7 +192,7 @@ struct ControlCenterView: View {
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(on ? Color.white : Color.white.opacity(0.06)))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressScaleButtonStyle())
     }
 
     // MARK: Footer
@@ -218,15 +222,5 @@ struct ControlCenterView: View {
                 .stroke(Color.white.opacity(0.08), lineWidth: 0.5))
     }
 
-    private func ctlIcon(_ name: String, _ size: CGFloat, _ action: @escaping () -> Void) -> some View {
-        Button {
-            HapticManager.shared.triggerClick()
-            action()
-        } label: {
-            Image(systemName: name).font(.system(size: size, weight: .medium))
-                .foregroundColor(.white).frame(width: size + 8, height: size + 8)
-                .contentShape(Rectangle())
-        }.buttonStyle(.plain)
-    }
 }
 

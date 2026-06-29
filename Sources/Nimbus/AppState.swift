@@ -176,7 +176,7 @@ class AppState: ObservableObject {
                 // Taller when synced lyrics are available, to fit the karaoke strip.
                 return CGSize(width: 360, height: LyricsManager.shared.available ? 248 : 178)
             case .stats:
-                return CGSize(width: 350, height: 180)
+                return CGSize(width: 360, height: 206)
             case .timer:
                 return CGSize(width: 300, height: 160)
             case .weather:

@@ -110,17 +110,17 @@ struct MusicWidgetView: View {
 
                 // Row 3 ─ Transport controls
                 HStack(spacing: 0) {
-                    iconBtn("shuffle",       size: 13, dim: true)  {}
+                    TransportButton(icon: "shuffle", size: 12, dim: true) {}
                     Spacer()
-                    iconBtn("backward.fill", size: 20)             { music.prevTrack() }
+                    TransportButton(icon: "backward.fill", size: 19) { music.prevTrack() }
                     Spacer()
-                    iconBtn(music.isPlaying ? "pause.fill" : "play.fill", size: 27) {
+                    TransportButton(icon: music.isPlaying ? "pause.fill" : "play.fill", size: 20, primary: true) {
                         music.togglePlayPause()
                     }
                     Spacer()
-                    iconBtn("forward.fill",  size: 20)             { music.nextTrack() }
+                    TransportButton(icon: "forward.fill", size: 19) { music.nextTrack() }
                     Spacer()
-                    iconBtn("repeat",        size: 13, dim: true)  {}
+                    TransportButton(icon: "repeat", size: 12, dim: true) {}
                 }
 
                 // Row 4 ─ Synced karaoke lyrics (only when available)
@@ -205,28 +205,65 @@ struct MusicWidgetView: View {
         }
     }
 
-    private func iconBtn(
-        _ name: String,
-        size: CGFloat,
-        dim: Bool = false,
-        action: @escaping () -> Void = {}
-    ) -> some View {
-        Button(action: {
-            HapticManager.shared.triggerClick()
-            action()
-        }) {
-            Image(systemName: name)
-                .font(.system(size: size, weight: .medium))
-                .foregroundColor(dim ? Color.white.opacity(0.38) : .white)
-                .frame(width: max(size + 14, 36), height: max(size + 14, 36))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
     private func formatTime(_ s: Double) -> String {
         let t = Int(max(0, s))
         return String(format: "%d:%02d", t / 60, t % 60)
+    }
+}
+
+// MARK: – Premium transport button
+
+/// A music transport control with hover-scale, press feedback, and an optional
+/// filled "primary" treatment (the play/pause button) for an Apple-Music feel.
+struct TransportButton: View {
+    let icon: String
+    let size: CGFloat
+    var primary: Bool = false
+    var dim: Bool = false
+    let action: () -> Void
+
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: { HapticManager.shared.triggerClick(); action() }) {
+            ZStack {
+                if primary {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: size + 24, height: size + 24)
+                        .shadow(color: .black.opacity(0.3), radius: 7, y: 2)
+                } else if hover {
+                    Circle()
+                        .fill(Color.white.opacity(0.10))
+                        .frame(width: size + 18, height: size + 18)
+                }
+                Image(systemName: icon)
+                    .font(.system(size: size, weight: primary ? .heavy : .semibold))
+                    .foregroundColor(iconColor)
+            }
+            .frame(width: size + (primary ? 24 : 18), height: size + (primary ? 24 : 18))
+            .contentShape(Circle())
+        }
+        .buttonStyle(PressScaleButtonStyle(hover: hover))
+        .onHover { hover = $0 }
+    }
+
+    private var iconColor: Color {
+        if primary { return .black }
+        if dim { return .white.opacity(hover ? 0.75 : 0.42) }
+        return .white.opacity(hover ? 1.0 : 0.85)
+    }
+}
+
+/// Scale on hover + press, using the standard ButtonStyle press detection
+/// (no extra gestures, so it never interferes with the tap).
+struct PressScaleButtonStyle: ButtonStyle {
+    var hover: Bool = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.88 : (hover ? 1.07 : 1.0))
+            .animation(.spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
+            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: hover)
     }
 }
 

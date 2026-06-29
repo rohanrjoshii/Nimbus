@@ -14,7 +14,7 @@ class SettingsWindow: NSWindow, NSWindowDelegate {
     }
     
     private init() {
-        let contentRect = NSRect(x: 0, y: 0, width: 540, height: 380)
+        let contentRect = NSRect(x: 0, y: 0, width: 560, height: 400)
         super.init(
             contentRect: contentRect,
             styleMask: [.titled, .closable, .fullSizeContentView],
@@ -30,24 +30,13 @@ class SettingsWindow: NSWindow, NSWindowDelegate {
         self.backgroundColor = .clear
         self.isOpaque = false
         self.hasShadow = true
-        
-        // Frosted visual effect view
-        let visualEffect = NSVisualEffectView()
-        visualEffect.material = .hudWindow
-        visualEffect.blendingMode = .behindWindow
-        visualEffect.state = .active
-        visualEffect.frame = contentRect
-        visualEffect.wantsLayer = true
-        visualEffect.layer?.cornerRadius = 16
-        visualEffect.layer?.masksToBounds = true
-        
-        // Wrap our settings view
-        let hosting = NSHostingView(rootView: SettingsView())
-        hosting.frame = contentRect
-        visualEffect.addSubview(hosting)
-        
-        self.contentView = visualEffect
         self.delegate = self
+
+        // Let SwiftUI manage its own layout via NSHostingController. Manually
+        // placing an NSHostingView (fixed frame) inside an NSVisualEffectView made
+        // AppKit's constraint layout throw an exception → crash on open. The frosted
+        // background now lives inside SettingsView itself.
+        self.contentViewController = NSHostingController(rootView: SettingsView())
         self.center()
     }
     

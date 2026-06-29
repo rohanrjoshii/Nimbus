@@ -24,84 +24,94 @@ struct SettingsView: View {
     
     var body: some View {
         HStack(spacing: 0) {
-            // Sidebar List
-            VStack(alignment: .leading, spacing: 6) {
-                // App Logo Title
-                HStack(spacing: 8) {
+            // ── Sidebar ──────────────────────────────────────────────────────
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 9) {
                     Image(systemName: "sparkles")
-                        .foregroundColor(.blue)
-                        .font(.system(size: 16, weight: .bold))
-                    Text("Nimbus Settings")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.white)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 16)
-                
-                ForEach(SettingsTab.allCases) { tab in
-                    Button(action: {
-                        HapticManager.shared.triggerClick()
-                        activeTab = tab
-                    }) {
-                        HStack(spacing: 10) {
-                            Image(systemName: tab.iconName)
-                                .font(.system(size: 12))
-                                .frame(width: 16)
-                            Text(tab.rawValue)
-                                .font(.system(size: 12, weight: .medium))
-                            Spacer()
-                        }
-                        .foregroundColor(activeTab == tab ? .white : .white.opacity(0.6))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(activeTab == tab ? Color.white.opacity(0.12) : Color.clear)
-                        )
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(LinearGradient(colors: [.cyan, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Nimbus").font(.system(size: 15, weight: .bold)).foregroundColor(.white)
+                        Text("Settings").font(.system(size: 10, weight: .medium)).foregroundColor(.white.opacity(0.5))
                     }
-                    .buttonStyle(.plain)
                 }
-                
+                .padding(.horizontal, 14)
+                .padding(.bottom, 16)
+
+                ForEach(SettingsTab.allCases) { tab in
+                    navItem(tab)
+                }
+
                 Spacer()
-                
-                // Footer
+
                 Text("Version 1.0.0 (Beta)")
                     .font(.system(size: 9))
                     .foregroundColor(.white.opacity(0.3))
-                    .padding(.leading, 12)
-                    .padding(.bottom, 12)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 14)
             }
-            .frame(width: 160)
-            .background(
-                VisualEffectView(material: .sidebar, blendingMode: .withinWindow)
-            )
-            
-            Divider()
-                .background(Color.white.opacity(0.1))
-            
-            // Content View
+            .padding(.top, 34)   // clear the macOS traffic-light buttons
+            .frame(width: 172)
+            .background(VisualEffectView(material: .sidebar, blendingMode: .withinWindow))
+
+            // ── Content ──────────────────────────────────────────────────────
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     switch activeTab {
-                    case .general:
-                        generalSettings
-                    case .appearance:
-                        appearanceSettings
-                    case .behavior:
-                        behaviorSettings
-                    case .about:
-                        aboutView
+                    case .general:    generalSettings
+                    case .appearance: appearanceSettings
+                    case .behavior:   behaviorSettings
+                    case .about:      aboutView
                     }
                 }
                 .padding(24)
+                .padding(.top, 6)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black.opacity(0.2))
+            .background(Color.black.opacity(0.18))
+            .overlay(alignment: .topTrailing) {
+                Button { SettingsWindow.shared.close() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white.opacity(0.65))
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(Color.white.opacity(0.08)))
+                        .overlay(Circle().stroke(Color.white.opacity(0.10), lineWidth: 0.5))
+                }
+                .buttonStyle(PressScaleButtonStyle())
+                .padding(14)
+            }
         }
-        .frame(width: 540, height: 380)
+        .frame(width: 560, height: 400)
+        .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
         .preferredColorScheme(.dark)
     }
-    
+
+    private func navItem(_ tab: SettingsTab) -> some View {
+        let active = activeTab == tab
+        return Button {
+            HapticManager.shared.triggerClick()
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) { activeTab = tab }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: tab.iconName).font(.system(size: 12, weight: .semibold)).frame(width: 18)
+                Text(tab.rawValue).font(.system(size: 12.5, weight: .semibold))
+                Spacer()
+            }
+            .foregroundColor(active ? .white : .white.opacity(0.55))
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(active
+                          ? AnyShapeStyle(LinearGradient(colors: [Color.blue.opacity(0.85), Color.purple.opacity(0.8)], startPoint: .leading, endPoint: .trailing))
+                          : AnyShapeStyle(Color.clear))
+                    .shadow(color: active ? Color.blue.opacity(0.35) : .clear, radius: 6, y: 2)
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+    }
+
     // MARK: - General Settings
     private var generalSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
