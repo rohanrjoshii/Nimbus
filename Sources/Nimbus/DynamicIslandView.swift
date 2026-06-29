@@ -8,6 +8,7 @@ struct DynamicIslandView: View {
 
     @ObservedObject private var lyrics = LyricsManager.shared
     @ObservedObject private var calendar = CalendarManager.shared
+    @ObservedObject private var audio = AudioDeviceManager.shared
 
     @State private var pulsePhase: Double = 0.0
 
@@ -158,6 +159,27 @@ struct DynamicIslandView: View {
     private var collapsedLayout: some View {
         Group {
             switch appState.currentActivity {
+            case .audioDevice:
+                HStack(spacing: 10) {
+                    Image(systemName: audio.deviceIcon)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 22)
+                    Text(audio.deviceName.isEmpty ? "Headphones" : audio.deviceName)
+                        .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 6)
+                    HStack(spacing: 4) {
+                        Circle().fill(.green).frame(width: 6, height: 6)
+                        Text("Connected")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.green)
+                    }
+                }
+                .padding(.horizontal, 15)
+
             case .timer:
                 HStack(spacing: 10) {
                     Image(systemName: "hourglass")

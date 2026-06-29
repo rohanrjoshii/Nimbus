@@ -23,15 +23,16 @@ enum IslandTab: String, CaseIterable, Identifiable {
 
 /// The single most relevant thing to surface right now (iPhone-style live activity).
 enum IslandActivity: Equatable {
-    case idle, music, timer, calendar, battery
+    case idle, music, timer, calendar, battery, audioDevice
 
     var tab: IslandTab? {
         switch self {
-        case .music:    return .music
-        case .timer:    return .timer
-        case .calendar: return .calendar
-        case .battery:  return .stats
-        case .idle:     return nil
+        case .music:       return .music
+        case .timer:       return .timer
+        case .calendar:    return .calendar
+        case .battery:     return .stats
+        case .audioDevice: return nil
+        case .idle:        return nil
         }
     }
 }
@@ -150,11 +151,21 @@ class AppState: ObservableObject {
         .receive(on: RunLoop.main)
         .sink { [weak self] _ in self?.objectWillChange.send() }
         .store(in: &cancellables)
+
+        // Pop the island when an audio device connects.
+        AudioDeviceManager.shared.$showConnected
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { self?.objectWillChange.send() }
+            }
+            .store(in: &cancellables)
     }
     
     /// Priority-ordered "what matters now". Timer > playing music > imminent event
     /// > low battery > paused music > idle.
     var currentActivity: IslandActivity {
+        if AudioDeviceManager.shared.showConnected { return .audioDevice }   // transient, top priority
         if TimerManager.shared.isActive { return .timer }
         if MusicManager.shared.isPlaying { return .music }
         if CalendarManager.shared.imminentTitle != nil { return .calendar }
@@ -187,6 +198,8 @@ class AppState: ObservableObject {
         } else {
             // Collapsed size matches the current live-activity.
             switch currentActivity {
+            case .audioDevice:
+                return CGSize(width: 260, height: 40)
             case .timer:
                 return CGSize(width: 230, height: 38)
             case .music:
