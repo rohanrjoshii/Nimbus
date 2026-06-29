@@ -62,6 +62,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         WeatherManager.shared.start()
         CalendarManager.shared.start()
         AudioDeviceManager.shared.start()
+        PowerManager.shared.start()
+        VolumeMonitor.shared.start()
         MenuBarController.shared.setup()
         HotKeyManager.shared.onTrigger = {
             AppState.shared.islandHidden.toggle()

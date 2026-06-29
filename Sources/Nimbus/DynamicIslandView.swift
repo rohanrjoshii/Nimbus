@@ -9,6 +9,8 @@ struct DynamicIslandView: View {
     @ObservedObject private var lyrics = LyricsManager.shared
     @ObservedObject private var calendar = CalendarManager.shared
     @ObservedObject private var audio = AudioDeviceManager.shared
+    @ObservedObject private var power = PowerManager.shared
+    @ObservedObject private var volume = VolumeMonitor.shared
 
     @State private var pulsePhase: Double = 0.0
 
@@ -163,7 +165,7 @@ struct DynamicIslandView: View {
                 HStack(spacing: 10) {
                     Image(systemName: audio.deviceIcon)
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(audio.isConnected ? .white : .white.opacity(0.6))
                         .frame(width: 22)
                     Text(audio.deviceName.isEmpty ? "Headphones" : audio.deviceName)
                         .font(.system(size: 12.5, weight: .semibold, design: .rounded))
@@ -172,11 +174,46 @@ struct DynamicIslandView: View {
                         .truncationMode(.tail)
                     Spacer(minLength: 6)
                     HStack(spacing: 4) {
-                        Circle().fill(.green).frame(width: 6, height: 6)
-                        Text("Connected")
+                        Circle().fill(audio.isConnected ? Color.green : Color.white.opacity(0.4)).frame(width: 6, height: 6)
+                        Text(audio.isConnected ? "Connected" : "Disconnected")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.green)
+                            .foregroundColor(audio.isConnected ? .green : .white.opacity(0.5))
                     }
+                }
+                .padding(.horizontal, 15)
+
+            case .charging:
+                HStack(spacing: 10) {
+                    Image(systemName: power.isCharging ? "bolt.fill" : "battery.50")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(power.isCharging ? .green : .white.opacity(0.85))
+                        .frame(width: 20)
+                    Text(power.isCharging ? "Charging" : "On Battery")
+                        .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                    Spacer(minLength: 6)
+                    Text("\(power.level)%")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(power.isCharging ? .green : .white.opacity(0.8))
+                }
+                .padding(.horizontal, 15)
+
+            case .volume:
+                HStack(spacing: 11) {
+                    Image(systemName: volume.muted || volume.volume < 0.01 ? "speaker.slash.fill"
+                            : (volume.volume < 0.4 ? "speaker.wave.1.fill" : "speaker.wave.3.fill"))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 20)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.18)).frame(height: 5)
+                            Capsule().fill(.white)
+                                .frame(width: max(3, geo.size.width * CGFloat(volume.muted ? 0 : volume.volume)), height: 5)
+                                .animation(.spring(response: 0.25, dampingFraction: 0.8), value: volume.volume)
+                        }
+                    }
+                    .frame(height: 5)
                 }
                 .padding(.horizontal, 15)
 

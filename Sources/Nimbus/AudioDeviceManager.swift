@@ -10,9 +10,12 @@ final class AudioDeviceManager: ObservableObject {
 
     @Published var deviceName: String = ""
     @Published var deviceIcon: String = "headphones"
-    @Published var showConnected: Bool = false   // transient — true for a few seconds on connect
+    @Published var isConnected: Bool = true        // true = connected event, false = disconnected
+    @Published var showConnected: Bool = false      // transient — true for a few seconds on change
 
     private var lastDeviceID: AudioDeviceID = 0
+    private var lastExternalName: String = ""       // last non-builtin device (for disconnect message)
+    private var lastExternalIcon: String = "headphones"
     private var dismissWork: DispatchWorkItem?
 
     private init() {}
@@ -38,15 +41,26 @@ final class AudioDeviceManager: ObservableObject {
         lastDeviceID = dev
 
         let transport = transportType(dev)
-        // Only announce real "you plugged in headphones" devices — skip built-in speakers.
-        guard transport != kAudioDeviceTransportTypeBuiltIn,
-              transport != kAudioDeviceTransportTypeVirtual,
-              transport != kAudioDeviceTransportTypeAggregate else { return }
+        let isBuiltIn = (transport == kAudioDeviceTransportTypeBuiltIn
+                         || transport == kAudioDeviceTransportTypeVirtual
+                         || transport == kAudioDeviceTransportTypeAggregate)
 
-        let name = deviceName(dev)
-        deviceName = name
-        deviceIcon = icon(for: transport, name: name)
+        if !isBuiltIn {
+            // A real external output became active → Connected.
+            let name = deviceName(dev)
+            let ic = icon(for: transport, name: name)
+            deviceName = name; deviceIcon = ic; isConnected = true
+            lastExternalName = name; lastExternalIcon = ic
+            flash()
+        } else if !lastExternalName.isEmpty {
+            // Reverted to built-in speakers → the external device Disconnected.
+            deviceName = lastExternalName; deviceIcon = lastExternalIcon; isConnected = false
+            lastExternalName = ""
+            flash()
+        }
+    }
 
+    private func flash() {
         showConnected = true
         dismissWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.showConnected = false }

@@ -23,16 +23,15 @@ enum IslandTab: String, CaseIterable, Identifiable {
 
 /// The single most relevant thing to surface right now (iPhone-style live activity).
 enum IslandActivity: Equatable {
-    case idle, music, timer, calendar, battery, audioDevice
+    case idle, music, timer, calendar, battery, audioDevice, charging, volume
 
     var tab: IslandTab? {
         switch self {
-        case .music:       return .music
-        case .timer:       return .timer
-        case .calendar:    return .calendar
-        case .battery:     return .stats
-        case .audioDevice: return nil
-        case .idle:        return nil
+        case .music:    return .music
+        case .timer:    return .timer
+        case .calendar: return .calendar
+        case .battery:  return .stats
+        default:        return nil   // transient pops don't switch tabs
         }
     }
 }
@@ -152,20 +151,34 @@ class AppState: ObservableObject {
         .sink { [weak self] _ in self?.objectWillChange.send() }
         .store(in: &cancellables)
 
-        // Pop the island when an audio device connects.
-        AudioDeviceManager.shared.$showConnected
-            .removeDuplicates()
+        // Pop the island for transient events (audio device, charging, volume).
+        Publishers.CombineLatest3(
+            AudioDeviceManager.shared.$showConnected,
+            PowerManager.shared.$showEvent,
+            VolumeMonitor.shared.$showHUD
+        )
+        .map { "\($0)\($1)\($2)" }
+        .removeDuplicates()
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { self?.objectWillChange.send() }
+        }
+        .store(in: &cancellables)
+
+        // Live volume level updates (so the HUD bar moves while visible).
+        VolumeMonitor.shared.$volume
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { self?.objectWillChange.send() }
-            }
+            .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
     }
     
     /// Priority-ordered "what matters now". Timer > playing music > imminent event
     /// > low battery > paused music > idle.
     var currentActivity: IslandActivity {
-        if AudioDeviceManager.shared.showConnected { return .audioDevice }   // transient, top priority
+        // Transient "pops" take priority briefly.
+        if VolumeMonitor.shared.showHUD { return .volume }
+        if PowerManager.shared.showEvent { return .charging }
+        if AudioDeviceManager.shared.showConnected { return .audioDevice }
         if TimerManager.shared.isActive { return .timer }
         if MusicManager.shared.isPlaying { return .music }
         if CalendarManager.shared.imminentTitle != nil { return .calendar }
@@ -200,6 +213,10 @@ class AppState: ObservableObject {
             switch currentActivity {
             case .audioDevice:
                 return CGSize(width: 260, height: 40)
+            case .charging:
+                return CGSize(width: 220, height: 40)
+            case .volume:
+                return CGSize(width: 210, height: 40)
             case .timer:
                 return CGSize(width: 230, height: 38)
             case .music:
