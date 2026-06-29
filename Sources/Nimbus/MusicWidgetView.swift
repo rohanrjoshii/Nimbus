@@ -25,70 +25,72 @@ struct MusicWidgetView: View {
 
     var body: some View {
         ZStack {
-            // ── Living album-art aurora backdrop ────────────────────────────
+            // ── Living album-art backdrop + depth gradient ──────────────────
             artworkBackground
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .blur(radius: 48)
-                .opacity(0.42)
-                .scaleEffect(breathe ? 1.18 : 1.02)
-                .hueRotation(.degrees(breathe ? 7 : -7))
+                .blur(radius: 55)
+                .opacity(0.5)
+                .scaleEffect(breathe ? 1.2 : 1.05)
+                .hueRotation(.degrees(breathe ? 6 : -6))
+                .allowsHitTesting(false)
+            LinearGradient(colors: [Color.white.opacity(0.05), .clear, Color.black.opacity(0.42)],
+                           startPoint: .top, endPoint: .bottom)
                 .allowsHitTesting(false)
 
             // ── Main content ─────────────────────────────────────────────────
             VStack(alignment: .leading, spacing: 14) {
 
                 // Row 1 ─ Album art + Title / Artist + source dot
-                HStack(alignment: .center, spacing: 12) {
+                HStack(alignment: .center, spacing: 13) {
                     albumArtView
-                        .frame(width: 54, height: 54)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .shadow(color: .black.opacity(0.5), radius: 8, x: 0, y: 4)
+                        .frame(width: 62, height: 62)
+                        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .stroke(Color.white.opacity(0.16), lineWidth: 0.5))
+                        .shadow(color: .black.opacity(0.55), radius: 11, x: 0, y: 5)
 
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(music.trackTitle)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 14.5, weight: .bold))
                             .foregroundColor(.white)
                             .lineLimit(1)
                             .truncationMode(.tail)
 
-                        Text(music.trackArtist)
-                            .font(.system(size: 12, weight: .regular))
-                            .foregroundColor(Color.white.opacity(0.50))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                        HStack(spacing: 6) {
+                            Circle().fill(sourceDotColor).frame(width: 5, height: 5)
+                                .opacity(music.activePlayer == .none ? 0 : 1)
+                            Text(music.trackArtist)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.55))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
                     }
 
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 6)
 
-                    // Tiny source colour dot (green Spotify · red Apple Music · white other)
-                    Circle()
-                        .fill(sourceDotColor)
-                        .frame(width: 6, height: 6)
-                        .opacity(music.activePlayer == .none ? 0 : 1)
+                    // Now-playing equaliser in the source colour
+                    if music.isPlaying && music.activePlayer != .none {
+                        MiniWaveformVisualizer(isPlaying: true, activePlayer: music.activePlayer)
+                            .frame(width: 16)
+                    }
                 }
 
                 // Row 2 ─ Scrubber track + time labels
-                VStack(spacing: 5) {
+                VStack(spacing: 6) {
                     GeometryReader { geo in
+                        let frac = music.trackDuration > 1 ? CGFloat(music.playerPosition / music.trackDuration) : 0
+                        let w = max(0, min(geo.size.width * frac, geo.size.width))
                         ZStack(alignment: .leading) {
-                            Capsule()
-                                .fill(Color.white.opacity(0.18))
-                                .frame(height: 3)
-                            Capsule()
-                                .fill(Color.white.opacity(0.92))
-                                .frame(
-                                    width: max(0, min(
-                                        geo.size.width * CGFloat(
-                                            music.trackDuration > 1
-                                                ? music.playerPosition / music.trackDuration
-                                                : 0
-                                        ),
-                                        geo.size.width
-                                    )),
-                                    height: 3
-                                )
+                            Capsule().fill(Color.white.opacity(0.16)).frame(height: 4)
+                            Capsule().fill(Color.white.opacity(0.95)).frame(width: w, height: 4)
+                                .animation(.linear(duration: 0.6), value: music.playerPosition)
+                            Circle().fill(.white).frame(width: 10, height: 10)
+                                .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                                .offset(x: w - 5)
                                 .animation(.linear(duration: 0.6), value: music.playerPosition)
                         }
+                        .contentShape(Rectangle())
                         .gesture(
                             DragGesture(minimumDistance: 0)
                                 .onChanged { v in
@@ -97,7 +99,7 @@ struct MusicWidgetView: View {
                                 }
                         )
                     }
-                    .frame(height: 3)
+                    .frame(height: 10)
 
                     HStack {
                         Text(elapsed)

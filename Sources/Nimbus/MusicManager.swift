@@ -30,6 +30,7 @@ class MusicManager: ObservableObject {
     // pile up across 1s ticks (that pile-up was the cause of the hang/lag).
     private let pollQueue = DispatchQueue(label: "com.akshayjoshi.nimbus.poll", qos: .userInitiated)
     private var pollPending = false
+    private var isBrowserSource = false   // current .system track came from a browser tab (controllable via JS)
 
     // Dynamic MediaRemote function pointers — system-wide now-playing + transport control.
     private typealias MRMediaRemoteGetNowPlayingInfoFunction = @convention(c) (DispatchQueue, @escaping (CFDictionary) -> Void) -> Void
@@ -138,7 +139,8 @@ class MusicManager: ObservableObject {
         // Browser fallback — only when a browser is frontmost (a single cheap osascript).
         if let b = queryBrowser() {
             DispatchQueue.main.async {
-                self.applyNowPlaying(title: b.title, artist: b.artist, pos: 0, dur: 0, playing: true, artwork: nil)
+                self.applyNowPlaying(title: b.title, artist: b.artist, pos: b.pos, dur: b.dur,
+                                     playing: b.playing, artwork: nil, browser: true)
             }
             if let art = b.artworkURL { fetchRemoteArtwork(art, title: b.title, artist: b.artist) }
             return
@@ -148,46 +150,83 @@ class MusicManager: ObservableObject {
 
     // MARK: - Browser tab fallback (YouTube etc.)
 
-    /// Reads the active tab of a running browser. Best-effort: shows the active
-    /// media tab's title/thumbnail (can't read true play/pause without MediaRemote).
-    /// Requires Automation permission for the browser.
-    private func queryBrowser() -> (title: String, artist: String, artworkURL: String?)? {
-        // Only query the FRONTMOST browser — one osascript, and only while the
-        // user is actually in the browser. Avoids polling 6 browsers every tick.
-        guard let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier?.lowercased() else { return nil }
-        let appName: String
-        let isSafari: Bool
-        if front.contains("google.chrome")      { appName = "Google Chrome";  isSafari = false }
-        else if front.contains("brave")          { appName = "Brave Browser";  isSafari = false }
-        else if front.contains("edgemac")        { appName = "Microsoft Edge"; isSafari = false }
-        else if front.contains("thebrowser") || front.hasSuffix(".arc") { appName = "Arc"; isSafari = false }
-        else if front.contains("apple.safari")   { appName = "Safari";         isSafari = true }
-        else { return nil }
+    struct BrowserTrack { let title: String; let artist: String; let artworkURL: String?
+                          let pos: Double; let dur: Double; let playing: Bool }
 
-        let tab = isSafari ? "current tab of front window" : "active tab of front window"
-        let titleProp = isSafari ? "name" : "title"
+    /// The frontmost app if it's a supported browser → (AppleScript name, isSafari).
+    private func frontmostBrowser() -> (app: String, isSafari: Bool)? {
+        guard let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier?.lowercased() else { return nil }
+        if front.contains("google.chrome") { return ("Google Chrome", false) }
+        if front.contains("brave")          { return ("Brave Browser", false) }
+        if front.contains("edgemac")        { return ("Microsoft Edge", false) }
+        if front.contains("thebrowser") || front.hasSuffix(".arc") { return ("Arc", false) }
+        if front.contains("apple.safari")   { return ("Safari", true) }
+        return nil
+    }
+
+    /// Reads the frontmost browser's active media tab — title, thumbnail, and the
+    /// real <video> position/duration/play-state via injected JavaScript.
+    /// (JS needs "Allow JavaScript from Apple Events" enabled in the browser.)
+    private func queryBrowser() -> BrowserTrack? {
+        guard let b = frontmostBrowser() else { return nil }
+        let tab = b.isSafari ? "current tab of front window" : "active tab of front window"
+        let titleProp = b.isSafari ? "name" : "title"
+        let js = "(function(){var v=document.querySelector('video');if(!v)return '';return v.currentTime+'|'+v.duration+'|'+(v.paused?'0':'1');})()"
+        let exec = b.isSafari ? "do JavaScript jsCode in \(tab)" : "execute \(tab) javascript jsCode"
         let script = """
-        tell application "\(appName)"
+        tell application "\(b.app)"
             if (count of windows) is 0 then return ""
             set t to \(titleProp) of \(tab)
             set u to URL of \(tab)
-            return u & "|||" & t
+            set jsCode to "\(js)"
+            set vi to ""
+            try
+                set vi to (\(exec)) as text
+            end try
+            return u & "|||" & t & "|||" & vi
         end tell
         """
         return parseBrowserResult(runAppleScript(script))
     }
 
-    private func parseBrowserResult(_ out: String?) -> (title: String, artist: String, artworkURL: String?)? {
+    private func parseBrowserResult(_ out: String?) -> BrowserTrack? {
         guard let out = out else { return nil }
         let parts = out.components(separatedBy: "|||")
-        guard parts.count == 2 else { return nil }
+        guard parts.count >= 2 else { return nil }
         let url = parts[0].lowercased()
         guard url.contains("youtube.com/watch") || url.contains("music.youtube.com")
                 || url.contains("soundcloud.com/") || url.contains("open.spotify.com/") else { return nil }
         let title = cleanMediaTitle(parts[1])
         guard !title.isEmpty else { return nil }
+
+        var pos = 0.0, dur = 0.0, playing = true
+        if parts.count >= 3 {
+            let vi = parts[2].trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "|")
+            if vi.count >= 3 {
+                pos = Double(vi[0]).flatMap { $0.isFinite ? $0 : nil } ?? 0
+                dur = Double(vi[1]).flatMap { $0.isFinite ? $0 : nil } ?? 0
+                playing = (vi[2] == "1")
+            }
+        }
         let source = url.contains("youtube") ? "YouTube" : (url.contains("soundcloud") ? "SoundCloud" : "Web")
-        return (title, source, youtubeThumbnail(from: parts[0]))
+        return BrowserTrack(title: title, artist: source, artworkURL: youtubeThumbnail(from: parts[0]),
+                            pos: pos, dur: dur, playing: playing)
+    }
+
+    /// Injects JS into the frontmost browser's active tab (for transport control).
+    private func runBrowserJS(_ js: String) {
+        guard let b = frontmostBrowser() else { return }
+        let tab = b.isSafari ? "current tab of front window" : "active tab of front window"
+        let exec = b.isSafari ? "do JavaScript jsCode in \(tab)" : "execute \(tab) javascript jsCode"
+        let script = """
+        tell application "\(b.app)"
+            set jsCode to "\(js)"
+            try
+                \(exec)
+            end try
+        end tell
+        """
+        _ = runAppleScript(script)
     }
 
     private func cleanMediaTitle(_ raw: String) -> String {
@@ -236,6 +275,7 @@ class MusicManager: ObservableObject {
         let playing = (state == "playing")
         let safeTitle = title.isEmpty ? "Unknown Title" : title
         let safeArtist = artist.isEmpty ? "Unknown Artist" : artist
+        isBrowserSource = false
 
         // Only update if something actually changed (avoid redundant SwiftUI redraws)
         if self.trackTitle != safeTitle || self.trackArtist != safeArtist || self.activePlayer != player {
@@ -266,6 +306,7 @@ class MusicManager: ObservableObject {
 
     private func setNotPlaying() {
         guard activePlayer != .simulated else { return }
+        isBrowserSource = false
         isPlaying = false
         trackTitle = "Not Playing"
         trackArtist = "Play music anywhere"
@@ -303,8 +344,9 @@ class MusicManager: ObservableObject {
     }
 
     private func applyNowPlaying(title: String, artist: String, pos: Double,
-                                 dur: Double, playing: Bool, artwork: Data?) {
+                                 dur: Double, playing: Bool, artwork: Data?, browser: Bool = false) {
         guard !isSimulated else { return }
+        isBrowserSource = browser
 
         if trackTitle != title || trackArtist != artist || activePlayer != .system {
             trackTitle = title
@@ -387,6 +429,7 @@ class MusicManager: ObservableObject {
         if isSimulated { isPlaying.toggle(); return }
         isPlaying.toggle()   // optimistic — instant UI feedback
         let player = activePlayer
+        let browser = isBrowserSource
         runTransport {
             switch player {
             case .spotify where self.isAppRunning("Spotify"):
@@ -394,7 +437,8 @@ class MusicManager: ObservableObject {
             case .appleMusic where self.isAppRunning("Music"):
                 _ = self.runAppleScript("tell application \"Music\" to playpause")
             case .system:
-                _ = self.mrSendCommand?(self.kMRTogglePlayPause, nil)
+                if browser { self.runBrowserJS("var v=document.querySelector('video');if(v){v.paused?v.play():v.pause();}") }
+                else { _ = self.mrSendCommand?(self.kMRTogglePlayPause, nil) }
             case .none:
                 if self.isAppRunning("Spotify") { _ = self.runAppleScript("tell application \"Spotify\" to play") }
                 else if self.isAppRunning("Music") { _ = self.runAppleScript("tell application \"Music\" to play") }
@@ -406,11 +450,14 @@ class MusicManager: ObservableObject {
     func nextTrack() {
         if isSimulated { trackTitle = "Die For You"; trackArtist = "Joji"; trackDuration = 211; playerPosition = 0; return }
         let player = activePlayer
+        let browser = isBrowserSource
         runTransport {
             switch player {
             case .spotify where self.isAppRunning("Spotify"): _ = self.runAppleScript("tell application \"Spotify\" to next track")
             case .appleMusic where self.isAppRunning("Music"): _ = self.runAppleScript("tell application \"Music\" to next track")
-            case .system: _ = self.mrSendCommand?(self.kMRNextTrack, nil)
+            case .system:
+                if browser { self.runBrowserJS("var b=document.querySelector('.ytp-next-button');if(b)b.click();") }
+                else { _ = self.mrSendCommand?(self.kMRNextTrack, nil) }
             default: break
             }
         }
@@ -419,11 +466,14 @@ class MusicManager: ObservableObject {
     func prevTrack() {
         if isSimulated { trackTitle = "Sanctuary"; trackArtist = "Joji"; trackDuration = 180; playerPosition = 0; return }
         let player = activePlayer
+        let browser = isBrowserSource
         runTransport {
             switch player {
             case .spotify where self.isAppRunning("Spotify"): _ = self.runAppleScript("tell application \"Spotify\" to previous track")
             case .appleMusic where self.isAppRunning("Music"): _ = self.runAppleScript("tell application \"Music\" to previous track")
-            case .system: _ = self.mrSendCommand?(self.kMRPreviousTrack, nil)
+            case .system:
+                if browser { self.runBrowserJS("var v=document.querySelector('video');if(v)v.currentTime=0;") }
+                else { _ = self.mrSendCommand?(self.kMRPreviousTrack, nil) }
             default: break
             }
         }
@@ -433,11 +483,13 @@ class MusicManager: ObservableObject {
         if isSimulated { playerPosition = seconds; return }
         playerPosition = seconds   // optimistic scrubber position
         let player = activePlayer
+        let browser = isBrowserSource
         pollQueue.async { [weak self] in
             guard let self = self else { return }
             switch player {
             case .spotify where self.isAppRunning("Spotify"): _ = self.runAppleScript("tell application \"Spotify\" to set player position to \(seconds)")
             case .appleMusic where self.isAppRunning("Music"): _ = self.runAppleScript("tell application \"Music\" to set player position to \(seconds)")
+            case .system where browser: self.runBrowserJS("var v=document.querySelector('video');if(v)v.currentTime=\(Int(seconds));")
             default: break
             }
         }
